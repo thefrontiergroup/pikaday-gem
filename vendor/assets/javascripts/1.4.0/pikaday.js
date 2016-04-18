@@ -131,8 +131,12 @@
 
     compareDates = function(a,b)
     {
-        // weak date comparison (use setToStartOfDay(date) to ensure correct result)
-        return a.getTime() === b.getTime();
+        // Copy so we don't change the dates being passed in
+        var _a = new Date(a.getTime());
+        var _b = new Date(b.getTime());
+        setToStartOfDay(_a);
+        setToStartOfDay(_b);
+        return _a.getTime() === _b.getTime();
     },
 
     extend = function(to, from, overwrite)
@@ -191,7 +195,13 @@
         reposition: true,
 
         // the default output format for `.toString()` and `field` value
-        format: 'YYYY-MM-DD',
+        // set in `config` based on if showTime is set
+        format: null,
+
+        // an array giving the allowable input format(s).  As with moment,
+        // the input formats may be either a single string or an array of strings.
+        // Usually set in `config`
+        inputFormats: null,
 
         // the initial date to view when first opened
         defaultDate: null,
@@ -201,6 +211,9 @@
 
         // first day of week (0: Sunday, 1: Monday etc)
         firstDay: 0,
+
+        // the default flag for moment's strict date parsing
+        formatStrict: false,
 
         // the minimum/earliest date that can be selected
         minDate: null,
@@ -230,8 +243,22 @@
         // Render the month after year in the calendar title
         showMonthAfterYear: false,
 
+        // Render days of the calendar grid that fall in the next or previous month
+        showDaysInNextAndPreviousMonths: false,
+
         // how many months are visible
         numberOfMonths: 1,
+
+        // time
+        showTime: true,
+        showSeconds: false,
+        use24hour: false,
+        incrementHourBy: 1,
+        incrementMinuteBy: 1,
+        incrementSecondBy: 1,
+
+        // option to prevent calendar from auto-closing after date is selected
+        autoClose: true,
 
         // when numberOfMonths is used, this will help you to choose where the main calendar will be (default `left`, can be set to `right`)
         // only used for the first display or when a selected date is not visible
@@ -246,7 +273,9 @@
             nextMonth     : 'Next Month',
             months        : ['January','February','March','April','May','June','July','August','September','October','November','December'],
             weekdays      : ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'],
-            weekdaysShort : ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
+            weekdaysShort : ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'],
+            midnight      : 'Midnight',
+            noon          : 'Noon'
         },
 
         // Theme Classname
@@ -274,10 +303,14 @@
 
     renderDay = function(opts)
     {
-        if (opts.isEmpty) {
-            return '<td class="is-empty"></td>';
-        }
         var arr = [];
+        if (opts.isEmpty) {
+            if (opts.showDaysInNextAndPreviousMonths) {
+                arr.push('is-outside-current-month');
+            } else {
+                return '<td class="is-empty"></td>';
+            }
+        }
         if (opts.isDisabled) {
             arr.push('is-disabled');
         }
@@ -397,6 +430,45 @@
         return '<table cellpadding="0" cellspacing="0" class="pika-table">' + renderHead(opts) + renderBody(data) + '</table>';
     },
 
+    renderTimePicker = function(num_options, selected_val, select_class, display_func, increment_by) {
+        increment_by = increment_by || 1;
+        var to_return = '<td><select class="pika-select '+select_class+'">';
+        for (var i = 0; i < num_options; i += increment_by) {
+            to_return += '<option value="'+i+'" '+(i==selected_val ? 'selected' : '')+'>'+display_func(i)+'</option>'
+        }
+        to_return += '</select></td>';
+        return to_return;
+    },
+
+    renderTime = function(hh, mm, ss, opts)
+    {
+        var to_return = '<table cellpadding="0" cellspacing="0" class="pika-time"><tbody><tr>' +
+            renderTimePicker(24, hh, 'pika-select-hour', function(i) {
+                if (opts.use24hour) {
+                    return i;
+                } else {
+                    var to_return = (i%12) + (i<12 ? ' AM' : ' PM');
+                    if (to_return == '0 AM') {
+                        return opts.i18n.midnight;
+                    } else if (to_return == '0 PM') {
+                        return opts.i18n.noon;
+                    } else {
+                        return to_return;
+                    }
+                }
+            },
+            opts.incrementHourBy) +
+            '<td>:</td>' +
+            renderTimePicker(60, mm, 'pika-select-minute', function(i) { if (i < 10) return "0" + i; return i }, opts.incrementMinuteBy);
+
+        if (opts.showSeconds) {
+            to_return += '<td>:</td>' +
+                renderTimePicker(60, ss, 'pika-select-second', function(i) { if (i < 10) return "0" + i; return i }, opts.incrementSecondBy);
+        }
+        return to_return + '</tr></tbody></table>';
+    },
+
+
 
     /**
      * Pikaday constructor
@@ -419,10 +491,25 @@
 
             if (!hasClass(target, 'is-disabled')) {
                 if (hasClass(target, 'pika-button') && !hasClass(target, 'is-empty')) {
-                    self.setDate(new Date(target.getAttribute('data-pika-year'), target.getAttribute('data-pika-month'), target.getAttribute('data-pika-day')));
+                    var newDate = new Date(
+                            target.getAttribute('data-pika-year'),
+                            target.getAttribute('data-pika-month'),
+                            target.getAttribute('data-pika-day')
+                        );
+                    // Preserve time selection when date changed
+                    if (self._d && opts.showTime) {
+                        newDate.setHours(self._d.getHours());
+                        newDate.setMinutes(self._d.getMinutes());
+                        if (opts.showSeconds) {
+                            newDate.setSeconds(self._d.getSeconds());
+                        }
+                    }
+                    self.setDate(newDate);
                     if (opts.bound) {
                         sto(function() {
-                            self.hide();
+                            if (opts.autoClose) {
+                                self.hide();
+                            }
                             if (opts.field) {
                                 opts.field.blur();
                             }
@@ -462,6 +549,15 @@
             else if (hasClass(target, 'pika-select-year')) {
                 self.gotoYear(target.value);
             }
+            else if (hasClass(target, 'pika-select-hour')) {
+                self.setTime(target.value);
+            }
+            else if (hasClass(target, 'pika-select-minute')) {
+                self.setTime(null, target.value);
+            }
+            else if (hasClass(target, 'pika-select-second')) {
+                self.setTime(null, null, target.value);
+            }
         };
 
         self._onInputChange = function(e)
@@ -472,7 +568,7 @@
                 return;
             }
             if (hasMoment) {
-                date = moment(opts.field.value, opts.format);
+                date = moment(opts.field.value, opts.inputFormats, opts.formatStrict);
                 date = (date && date.isValid()) ? date.toDate() : null;
             }
             else {
@@ -507,7 +603,7 @@
             }
             while ((pEl = pEl.parentNode));
 
-            if (!self._c) {
+            if (opts.autoClose && !self._c) {
                 self._b = sto(function() {
                     self.hide();
                 }, 50);
@@ -530,7 +626,9 @@
                 }
             }
             do {
-                if (hasClass(pEl, 'pika-single') || pEl === opts.trigger) {
+                if (hasClass(pEl, 'pika-single') ||
+                    pEl === opts.trigger ||
+                    (opts.showTime && hasClass(pEl, 'pika-time-container'))) {
                     return;
                 }
             }
@@ -559,7 +657,7 @@
 
             if (!opts.defaultDate) {
                 if (hasMoment && opts.field.value) {
-                    opts.defaultDate = moment(opts.field.value, opts.format).toDate();
+                    opts.defaultDate = moment(opts.field.value, opts.inputFormats).toDate();
                 } else {
                     opts.defaultDate = new Date(Date.parse(opts.field.value));
                 }
@@ -610,6 +708,8 @@
 
             opts.isRTL = !!opts.isRTL;
 
+            opts.autoClose = !!opts.autoClose;
+
             opts.field = (opts.field && opts.field.nodeName) ? opts.field : null;
 
             opts.theme = (typeof opts.theme) === 'string' && opts.theme ? opts.theme : null;
@@ -635,7 +735,7 @@
                 opts.maxDate = opts.minDate = false;
             }
             if (opts.minDate) {
-                this.setMinDate(opts.minDate);
+               this.setMinDate(opts.minDate);
             }
             if (opts.maxDate) {
                 this.setMaxDate(opts.maxDate);
@@ -652,6 +752,18 @@
                 }
             }
 
+            // If no format is given, set based on showTime
+            if (opts.format === null) {
+                opts.format = 'YYYY-MM-DD';
+                if (opts.showTime) {
+                    opts.format += ' HH:mm:ss';
+                }
+            }
+
+            if(!opts.inputFormats) {
+                opts.inputFormats = opts.format;
+            }
+
             return opts;
         },
 
@@ -660,7 +772,7 @@
          */
         toString: function(format)
         {
-            return !isDate(this._d) ? '' : hasMoment ? moment(this._d).format(format || this._o.format) : this._d.toDateString();
+            return !isDate(this._d) ? '' : hasMoment ? moment(this._d).format(format || this._o.format) : this._o.showTime ? this._d.toString() : this._d.toDateString();
         },
 
         /**
@@ -687,6 +799,27 @@
         getDate: function()
         {
             return isDate(this._d) ? new Date(this._d.getTime()) : null;
+        },
+
+        /**
+         * set time components
+         * Currently defaulting to setting date to today if not set
+         */
+        setTime: function(hours, minutes, seconds) {
+            if (!this._d) {
+                this._d = new Date();
+                this._d.setHours(0,0,0,0);
+            }
+            if (hours) {
+                this._d.setHours(hours);
+            }
+            if (minutes) {
+                this._d.setMinutes(minutes);
+            }
+            if (seconds) {
+                this._d.setSeconds(seconds);
+            }
+            this.setDate(this._d);
         },
 
         /**
@@ -721,7 +854,13 @@
             }
 
             this._d = new Date(date.getTime());
-            setToStartOfDay(this._d);
+
+            if (this._o.showTime && !this._o.showSeconds) {
+                this._d.setSeconds(0);
+            } else if (!this._o.showTime) {
+                setToStartOfDay(this._d);
+            }
+
             this.gotoDate(this._d);
 
             if (this._o.field) {
@@ -757,7 +896,10 @@
             if (newCalendar) {
                 this.calendars = [{
                     month: date.getMonth(),
-                    year: date.getFullYear()
+                    year: date.getFullYear(),
+                    hour: date.getHours(),
+                    minute: date.getMinutes(),
+                    second: date.getSeconds()
                 }];
                 if (this._o.mainCalendar === 'right') {
                     this.calendars[0].month += 1 - this._o.numberOfMonths;
@@ -822,7 +964,7 @@
          */
         setMinDate: function(value)
         {
-            setToStartOfDay(value);
+            if (!this._o.showTime) setToStartOfDay(value);
             this._o.minDate = value;
             this._o.minYear  = value.getFullYear();
             this._o.minMonth = value.getMonth();
@@ -881,6 +1023,16 @@
 
             for (var c = 0; c < opts.numberOfMonths; c++) {
                 html += '<div class="pika-lendar">' + renderTitle(this, c, this.calendars[c].year, this.calendars[c].month, this.calendars[0].year) + this.render(this.calendars[c].year, this.calendars[c].month) + '</div>';
+            }
+
+            if (opts.showTime) {
+                html += '<div class="pika-time-container">' +
+                        renderTime(
+                            this._d ? this._d.getHours() : 0,
+                            this._d ? this._d.getMinutes() : 0,
+                            this._d ? this._d.getSeconds() : 0,
+                            opts)
+                    + '</div>';
             }
 
             this.el.innerHTML = html;
@@ -963,43 +1115,70 @@
                 before = new Date(year, month, 1).getDay(),
                 data   = [],
                 row    = [];
-            setToStartOfDay(now);
+            if (!opts.showTime) setToStartOfDay(now);
             if (opts.firstDay > 0) {
                 before -= opts.firstDay;
                 if (before < 0) {
                     before += 7;
                 }
             }
+            var previousMonth = month === 0 ? 11 : month - 1,
+                nextMonth = month === 11 ? 0 : month + 1,
+                yearOfPreviousMonth = month === 0 ? year - 1 : year,
+                yearOfNextMonth = month === 11 ? year + 1 : year,
+                daysInPreviousMonth = getDaysInMonth(yearOfPreviousMonth, previousMonth);
             var cells = days + before,
                 after = cells;
             while(after > 7) {
                 after -= 7;
             }
             cells += 7 - after;
+
+            // Ensure we only compare date portion when deciding to show a date in picker
+            var minDate_date = opts.minDate ? new Date(opts.minDate.getFullYear(), opts.minDate.getMonth(), opts.minDate.getDate()) : null;
+            var maxDate_date = opts.maxDate ? new Date(opts.maxDate.getFullYear(), opts.maxDate.getMonth(), opts.maxDate.getDate()) : null;
+
             for (var i = 0, r = 0; i < cells; i++)
             {
                 var day = new Date(year, month, 1 + (i - before)),
                     isSelected = isDate(this._d) ? compareDates(day, this._d) : false,
                     isToday = compareDates(day, now),
                     isEmpty = i < before || i >= (days + before),
+                    dayNumber = 1 + (i - before),
+                    monthNumber = month,
+                    yearNumber = year,
                     isStartRange = opts.startRange && compareDates(opts.startRange, day),
                     isEndRange = opts.endRange && compareDates(opts.endRange, day),
                     isInRange = opts.startRange && opts.endRange && opts.startRange < day && day < opts.endRange,
                     isDisabled = (opts.minDate && day < opts.minDate) ||
                                  (opts.maxDate && day > opts.maxDate) ||
                                  (opts.disableWeekends && isWeekend(day)) ||
-                                 (opts.disableDayFn && opts.disableDayFn(day)),
-                    dayConfig = {
-                        day: 1 + (i - before),
-                        month: month,
-                        year: year,
+                                 (opts.disableDayFn && opts.disableDayFn(day));
+
+                if (isEmpty) {
+                    if (i < before) {
+                        dayNumber = daysInPreviousMonth + dayNumber;
+                        monthNumber = previousMonth;
+                        yearNumber = yearOfPreviousMonth;
+                    } else {
+                        dayNumber = dayNumber - days;
+                        monthNumber = nextMonth;
+                        yearNumber = yearOfNextMonth;
+                    }
+                }
+
+                var dayConfig = {
+                        day: dayNumber,
+                        month: monthNumber,
+                        year: yearNumber,
                         isSelected: isSelected,
                         isToday: isToday,
                         isDisabled: isDisabled,
                         isEmpty: isEmpty,
                         isStartRange: isStartRange,
                         isEndRange: isEndRange,
-                        isInRange: isInRange
+                        isInRange: isInRange,
+                        showDaysInNextAndPreviousMonths: opts.showDaysInNextAndPreviousMonths
                     };
 
                 row.push(renderDay(dayConfig));
