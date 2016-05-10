@@ -3,6 +3,8 @@
 
 [Pikaday datepicker][pikaday] as a Ruby gem.
 
+This repo uses the `owenmead/Pikaday` version of Pikaday to include timepicker support.
+
 ## Getting Started
 
 Add the gem to your Gemfile:
