@@ -40,7 +40,7 @@ task :download do |t|
   puts "Target version: #{version.chomp('/')}"
 
   # Get the different versions
-  tags_url = 'https://api.github.com/repos/dbushell/Pikaday/tags'
+  tags_url = 'https://api.github.com/repos/owenmead/Pikaday/tags'
   result = JSON.parse(open(tags_url).read)
   versions = result.map { |item| item['name'] }
 
@@ -66,7 +66,7 @@ task :download do |t|
   create_dir dir_css, get_version
 
   # Download the right files
-  url_root = 'https://raw.github.com/dbushell/Pikaday/' + commit + '/'
+  url_root = 'https://raw.github.com/owenmead/Pikaday/' + commit + '/'
   url_js = url_root + 'pikaday.js'
   url_css = url_root + '/css/pikaday.css'
 
